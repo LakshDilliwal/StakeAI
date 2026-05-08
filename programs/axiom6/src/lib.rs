@@ -190,7 +190,7 @@ pub mod axiom6 {
         
         for i in (0..ctx.remaining_accounts.len()).step_by(2) {
             let ata_info = &ctx.remaining_accounts[i];
-            let pyth_info = &ctx.remaining_accounts[i+1];
+            let _pyth_info = &ctx.remaining_accounts[i+1];
             
             let ata_data = ata_info.try_borrow_data()?;
             let ata = TokenAccount::try_deserialize(&mut &ata_data[..])?;
