@@ -6,7 +6,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, BarChart, Bar,
 } from "recharts";
-import { stakeUsdc } from "../../../lib/stakeTransaction";
+import { stakeUsdc, unstakeShares } from "../../../lib/stakeTransaction";
 
 const MOCK_TRADES = Array.from({ length: 20 }, (_, i) => ({
   id: i + 1,
@@ -32,18 +32,20 @@ const AGENT_META = {
   apy: 18.6,
   tvl: 4200000,
   trades: 847,
-  aps: 1.1860,
-  hwm: 1.1860,
+  aps: 1.186,
+  hwm: 1.186,
   status: "Active",
   stakers: 312,
 };
 
 type TxState = "idle" | "loading" | "success" | "error";
+type Mode = "stake" | "unstake";
 
 export default function AgentDetail() {
   const { pubkey } = useParams<{ pubkey: string }>();
   const wallet = useWallet();
   const [tab, setTab] = useState<"overview" | "trades" | "stakers">("overview");
+  const [mode, setMode] = useState<Mode>("stake");
   const [stakeAmt, setStakeAmt] = useState("");
   const [txState, setTxState] = useState<TxState>("idle");
   const [txSig, setTxSig] = useState("");
@@ -51,27 +53,44 @@ export default function AgentDetail() {
 
   const agent = AGENT_META;
   const shortKey = pubkey ? `${pubkey.slice(0, 6)}...${pubkey.slice(-4)}` : "2aFg...ykJ";
+  const agentKey = pubkey ?? "2aFgAGbsujHkPyaHFyqUy5wPNCmPmYsbv9AtxS9FpykJ";
 
-  async function handleStake() {
+  async function handleAction() {
     if (!wallet.connected || !wallet.publicKey || !wallet.signTransaction) return;
     const amt = parseFloat(stakeAmt);
     if (!amt || amt <= 0) return;
+
     setTxState("loading");
     setTxErr("");
     setTxSig("");
-    const agentKey = pubkey ?? "2aFgAGbsujHkPyaHFyqUy5wPNCmPmYsbv9AtxS9FpykJ";
-    const result = await stakeUsdc(agentKey, amt, {
-      publicKey: wallet.publicKey,
-      signTransaction: wallet.signTransaction,
-    });
+
+    const result =
+      mode === "stake"
+        ? await stakeUsdc(agentKey, amt, {
+            publicKey: wallet.publicKey,
+            signTransaction: wallet.signTransaction,
+            signAllTransactions: wallet.signAllTransactions,
+          })
+        : await unstakeShares(agentKey, Math.floor(amt * 1_000_000), {
+            publicKey: wallet.publicKey,
+            signTransaction: wallet.signTransaction,
+            signAllTransactions: wallet.signAllTransactions,
+          });
+
     if (result.ok) {
       setTxState("success");
       setTxSig(result.signature);
+      setStakeAmt("");
     } else {
       setTxState("error");
-      setTxErr(result.error);
+      // Show the last meaningful line from on-chain logs if available
+      const lines = result.error.split("\n").filter(Boolean);
+      const shortErr = lines.find(l => l.includes("Error") || l.includes("error") || l.includes("0x")) ?? lines[lines.length - 1] ?? result.error;
+      setTxErr(shortErr.slice(0, 200));
     }
   }
+
+  const presets = mode === "stake" ? ["100", "500", "1000"] : ["50", "100", "500"];
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white px-4 py-8">
@@ -88,8 +107,10 @@ export default function AgentDetail() {
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold"
-                style={{ background: "linear-gradient(135deg, #01696f30, #01696f10)", border: "1px solid #01696f40" }}>
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold"
+                style={{ background: "linear-gradient(135deg,#01696f30,#01696f10)", border: "1px solid #01696f40" }}
+              >
                 🤖
               </div>
               <div>
@@ -110,71 +131,102 @@ export default function AgentDetail() {
             </div>
           </div>
 
-          {/* Stake card */}
-          <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-5 min-w-[280px]"
-            style={{ boxShadow: "inset 0 1px 0 rgba(1,105,111,0.08)" }}>
-            <p className="text-[10px] text-gray-600 uppercase tracking-widest mb-3 font-mono">Stake USDC</p>
+          {/* Stake / Unstake card */}
+          <div
+            className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-5 min-w-[300px]"
+            style={{ boxShadow: "inset 0 1px 0 rgba(1,105,111,0.08)" }}
+          >
+            {/* Mode toggle */}
+            <div className="flex gap-1 mb-4 p-1 bg-[#111] rounded-lg">
+              {(["stake", "unstake"] as Mode[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setMode(m); setStakeAmt(""); setTxState("idle"); }}
+                  className={`flex-1 py-1.5 rounded-md text-xs font-mono capitalize transition-all ${
+                    mode === m
+                      ? "bg-[#01696f]/20 text-[#01696f] border border-[#01696f]/40"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
 
+            <p className="text-[10px] text-gray-600 uppercase tracking-widest mb-3 font-mono">
+              {mode === "stake" ? "Amount (USDC)" : "Shares to burn"}
+            </p>
+
+            {/* Quick presets */}
             <div className="flex gap-2 mb-3">
-              {["100", "500", "1000"].map(v => (
-                <button key={v} onClick={() => setStakeAmt(v)}
+              {presets.map(v => (
+                <button
+                  key={v}
+                  onClick={() => setStakeAmt(v)}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-mono transition-all border ${
                     stakeAmt === v
                       ? "border-[#01696f]/50 text-[#01696f] bg-[#01696f]/10"
                       : "border-[#1f1f1f] text-gray-500 hover:border-[#333]"
-                  }`}>
-                  ${v}
+                  }`}
+                >
+                  {mode === "stake" ? `$${v}` : v}
                 </button>
               ))}
             </div>
 
             <input
               type="number"
-              placeholder="Custom amount (USDC)"
+              placeholder={mode === "stake" ? "Custom USDC amount" : "Shares to burn"}
               value={stakeAmt}
               onChange={e => { setStakeAmt(e.target.value); setTxState("idle"); }}
               className="w-full bg-[#111] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#01696f]/50 transition-colors mb-3"
             />
 
+            {!wallet.connected && (
+              <p className="text-[10px] text-yellow-500/60 mb-2 text-center font-mono">
+                ⚠ Connect wallet first
+              </p>
+            )}
+
             <button
               disabled={!wallet.connected || !stakeAmt || txState === "loading"}
-              onClick={handleStake}
+              onClick={handleAction}
               className="w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              style={{ background: "linear-gradient(135deg, #01696f, #0c4e54)" }}>
+              style={{ background: "linear-gradient(135deg,#01696f,#0c4e54)" }}
+            >
               {txState === "loading" && (
                 <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
               )}
               {txState === "loading"
                 ? "Confirming..."
-                : !wallet.connected
-                ? "Connect Wallet"
-                : "Stake"}
+                : mode === "stake"
+                ? "Stake USDC"
+                : "Unstake Shares"}
             </button>
 
-            {/* Feedback */}
+            {/* Success */}
             {txState === "success" && (
               <div className="mt-3 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
-                <p className="text-[11px] text-green-400 font-mono mb-1">✓ Staked successfully</p>
+                <p className="text-[11px] text-green-400 font-mono mb-1">✓ Transaction confirmed</p>
                 <a
                   href={`https://solscan.io/tx/${txSig}?cluster=devnet`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[10px] text-[#01696f] hover:underline font-mono break-all">
-                  {txSig.slice(0, 20)}...{txSig.slice(-8)} ↗
+                  className="text-[10px] text-[#01696f] hover:underline font-mono break-all"
+                >
+                  {txSig.slice(0, 24)}...{txSig.slice(-8)} ↗
                 </a>
               </div>
             )}
+
+            {/* Error — show the actual on-chain error */}
             {txState === "error" && (
               <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                <p className="text-[11px] text-red-400 font-mono">✗ {txErr}</p>
+                <p className="text-[11px] text-red-400 font-mono break-words">✗ {txErr}</p>
               </div>
-            )}
-
-            {!wallet.connected && (
-              <p className="text-[10px] text-yellow-500/60 mt-2 text-center font-mono">⚠ Wallet not connected</p>
             )}
           </div>
         </div>
@@ -182,14 +234,14 @@ export default function AgentDetail() {
         {/* KPI row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
           {[
-            { label: "APY",          value: `${agent.apy}%`,                       color: "#4ade80" },
-            { label: "TVL",          value: `$${(agent.tvl / 1e6).toFixed(2)}M`,   color: "#01696f" },
-            { label: "Assets/Share", value: agent.aps.toFixed(4),                  color: "#4f98a3" },
-            { label: "High Water",   value: agent.hwm.toFixed(4),                  color: "#9945ff" },
-            { label: "Total Trades", value: agent.trades.toString(),               color: "#2775ca" },
-            { label: "Stakers",      value: agent.stakers.toString(),              color: "#c7843a" },
-            { label: "Epoch",        value: "Daily",                               color: "#888" },
-            { label: "Perf Fee",     value: "20%",                                 color: "#888" },
+            { label: "APY",          value: `${agent.apy}%`,                      color: "#4ade80" },
+            { label: "TVL",          value: `$${(agent.tvl / 1e6).toFixed(2)}M`,  color: "#01696f" },
+            { label: "Assets/Share", value: agent.aps.toFixed(4),                 color: "#4f98a3" },
+            { label: "High Water",   value: agent.hwm.toFixed(4),                 color: "#9945ff" },
+            { label: "Total Trades", value: agent.trades.toString(),              color: "#2775ca" },
+            { label: "Stakers",      value: agent.stakers.toString(),             color: "#c7843a" },
+            { label: "Epoch",        value: "Daily",                              color: "#888" },
+            { label: "Perf Fee",     value: "20%",                                color: "#888" },
           ].map(k => (
             <div key={k.label} className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-4">
               <p className="text-[10px] text-gray-600 uppercase tracking-widest mb-1.5 font-mono">{k.label}</p>
@@ -201,12 +253,15 @@ export default function AgentDetail() {
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           {(["overview", "trades", "stakers"] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
+            <button
+              key={t}
+              onClick={() => setTab(t)}
               className={`px-4 py-2 rounded-lg text-xs font-mono capitalize transition-all border ${
                 tab === t
                   ? "border-[#01696f]/50 text-[#01696f] bg-[#01696f]/10"
                   : "border-[#1f1f1f] text-gray-500 hover:border-[#2a2a2a]"
-              }`}>
+              }`}
+            >
               {t}
             </button>
           ))}
@@ -221,13 +276,13 @@ export default function AgentDetail() {
                 <AreaChart data={MOCK_APS} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#01696f" stopOpacity={0.3} />
+                      <stop offset="5%" stopColor="#01696f" stopOpacity={0.3} />
                       <stop offset="95%" stopColor="#01696f" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
                   <XAxis dataKey="day" tick={{ fill: "#555", fontSize: 9 }} tickLine={false} axisLine={false} interval={6} />
-                  <YAxis tick={{ fill: "#555", fontSize: 9 }} tickLine={false} axisLine={false} domain={["auto","auto"]} />
+                  <YAxis tick={{ fill: "#555", fontSize: 9 }} tickLine={false} axisLine={false} domain={["auto", "auto"]} />
                   <Tooltip contentStyle={{ background: "#111", border: "1px solid #1f1f1f", borderRadius: 8, fontSize: 11 }} itemStyle={{ color: "#01696f" }} labelStyle={{ color: "#888" }} />
                   <Area type="monotone" dataKey="aps" stroke="#01696f" strokeWidth={2} fill="url(#g1)" dot={false} />
                 </AreaChart>
@@ -241,7 +296,7 @@ export default function AgentDetail() {
                   <XAxis dataKey="day" tick={{ fill: "#555", fontSize: 9 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fill: "#555", fontSize: 9 }} tickLine={false} axisLine={false} />
                   <Tooltip contentStyle={{ background: "#111", border: "1px solid #1f1f1f", borderRadius: 8, fontSize: 11 }} labelStyle={{ color: "#888" }} />
-                  <Bar dataKey="pnl" radius={[3, 3, 0, 0]} fill="#01696f" label={false} />
+                  <Bar dataKey="pnl" radius={[3, 3, 0, 0]} fill="#01696f" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
