@@ -1,110 +1,264 @@
 "use client";
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { Download } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useAnchorWallet, useConnection } from "@solana/wallet-adapter-react";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import { PublicKey } from "@solana/web3.js";
+import { getAccount } from "@solana/spl-token";
+import { Navbar } from "../../components/Navbar";
+import Link from "next/link";
 
-const AGENTS = [
-  { rank: 1, name: "Alpha-7", team: "DeFi Builder X", pubkey: "Alph...1111", status: "active", tvl: "$2.45M", pnl: "+12.4%", trades: 1247, sharpe: 2.10, fee: "15%", pnlPos: true },
-  { rank: 2, name: "Momentum-X", team: "Quant Team Alpha", pubkey: "Mome...2222", status: "active", tvl: "$1.89M", pnl: "+8.7%", trades: 983, sharpe: 1.80, fee: "10%", pnlPos: true },
-  { rank: 3, name: "Arb-Prime", team: "Arb Collective", pubkey: "ArbP...3333", status: "active", tvl: "$1.65M", pnl: "+6.2%", trades: 2104, sharpe: 2.40, fee: "20%", pnlPos: true },
-  { rank: 4, name: "Delta-Neutral-1", team: "Delta Labs", pubkey: "Delt...4444", status: "active", tvl: "$1.42M", pnl: "-2.1%", trades: 756, sharpe: 0.20, fee: "10%", pnlPos: false },
-  { rank: 5, name: "TWAP-Ghost", team: "Ghost Protocol", pubkey: "Ghos...5555", status: "paused", tvl: "$0.43M", pnl: "-4.3%", trades: 189, sharpe: -9.50, fee: "5%", pnlPos: false },
-];
+const PROGRAM_ID  = new PublicKey("2aFgAGbsujHkPyaHFyqUy5wPNCmPmYsbv9AtxS9FpykJ");
+const VAULT_ATA   = new PublicKey("A3gwLy3pyVs4eqNHF48iPRjaVTgbztz9EmPD1GU6ecPi");
 
-type SortKey = "tvl" | "pnl" | "sharpe";
+interface AgentRow {
+  pda:        string;
+  pubkey:     string;
+  developer:  string;
+  status:     string;
+  perfFeeBps: number;
+  shares:     number;
+  aps:        number;
+  hwm:        number;
+  pnl:        number;
+  trades:     number;
+  tvl:        number;
+  returnPct:  number;
+}
+
+function fmt(n: number, d = 2) { return n.toLocaleString("en-US", { maximumFractionDigits: d }); }
+function short(s: string) { return `${s.slice(0,4)}...${s.slice(-4)}`; }
 
 export default function Leaderboard() {
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">("all");
-  const [sortBy, setSortBy] = useState<SortKey>("pnl");
-  const [minTvl, setMinTvl] = useState(0);
+  const wallet         = useAnchorWallet();
+  const { connection } = useConnection();
+  const [agents, setAgents]   = useState<AgentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState("");
+  const [sort, setSort]       = useState<keyof AgentRow>("aps");
+  const [dir, setDir]         = useState<"asc"|"desc">("desc");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const filtered = AGENTS.filter(a => statusFilter === "all" || a.status === statusFilter);
+  const fetchAgents = async () => {
+    if (!wallet) return;
+    try {
+      setLoading(true);
+      const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
+      const idl      = await Program.fetchIdl(PROGRAM_ID, provider);
+      if (!idl) throw new Error("IDL not found");
+      const program  = new Program(idl as any, provider);
+
+      const all = await (program.account as any).agentState.all();
+      const rows: AgentRow[] = await Promise.all(all.map(async ({ publicKey, account }: any) => {
+        const vaultAta = account.vaultUsdcAta as PublicKey;
+        const vaultAcct = await getAccount(connection, vaultAta).catch(() => null);
+        const tvl  = vaultAcct ? Number(vaultAcct.amount) / 1_000_000 : 0;
+        const aps  = account.assetsPerShare.toNumber() / 1_000_000;
+        const hwm  = account.highWaterMark.toNumber()  / 1_000_000;
+        const returnPct = hwm > 0 ? ((aps - hwm) / hwm * 100) : 0;
+        return {
+          pda:        publicKey.toBase58(),
+          pubkey:     account.agentPubkey.toBase58(),
+          developer:  account.developer.toBase58(),
+          status:     Object.keys(account.status)[0],
+          perfFeeBps: account.performanceFeeBps,
+          shares:     account.totalShares.toNumber() / 1_000_000,
+          aps,
+          hwm,
+          pnl:        account.cumulativePnl.toNumber() / 1_000_000,
+          trades:     account.totalTrades.toNumber(),
+          tvl,
+          returnPct,
+        };
+      }));
+
+      setAgents(rows);
+      setLastUpdated(new Date());
+      setError("");
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAgents();
+    const t = setInterval(fetchAgents, 15_000);
+    return () => clearInterval(t);
+  }, [wallet]);
+
+  const sorted = [...agents].sort((a, b) => {
+    const av = a[sort] as number | string;
+    const bv = b[sort] as number | string;
+    if (typeof av === "number" && typeof bv === "number")
+      return dir === "desc" ? bv - av : av - bv;
+    return dir === "desc"
+      ? String(bv).localeCompare(String(av))
+      : String(av).localeCompare(String(bv));
+  });
+
+  const toggleSort = (col: keyof AgentRow) => {
+    if (sort === col) setDir(d => d === "desc" ? "asc" : "desc");
+    else { setSort(col); setDir("desc"); }
+  };
+
+  const cols: { key: keyof AgentRow; label: string; align?: string }[] = [
+    { key: "pda",       label: "Agent" },
+    { key: "status",    label: "Status" },
+    { key: "tvl",       label: "TVL",      align: "right" },
+    { key: "aps",       label: "APS",      align: "right" },
+    { key: "returnPct", label: "Return",   align: "right" },
+    { key: "pnl",       label: "PnL",      align: "right" },
+    { key: "trades",    label: "Trades",   align: "right" },
+    { key: "perfFeeBps",label: "Perf Fee", align: "right" },
+  ];
 
   return (
-    <div className="space-y-6 pb-12">
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <h1 className="text-xl font-bold text-white">Global Leaderboard</h1>
-          <p className="text-xs text-gray-500 mt-1">Track, compare, and analyze all autonomous trading agents.</p>
-        </div>
-        <button onClick={() => { const headers = ["Rank","Agent","Pubkey","Status","TVL","PNL","Trades","Sharpe","Fee"]; const rows = filtered.map((a,i) => [i+1, a.name, a.pubkey, a.status, a.tvl, a.pnl, a.trades, a.sharpe, a.fee]); const csv = [headers,...rows].map(r => r.map(v => `"${v}"`).join(",")).join("\n"); const blob = new Blob([csv],{type:"text/csv"}); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href=url; a.download="axiom6-leaderboard.csv"; a.click(); URL.revokeObjectURL(url); }} className="flex items-center gap-2 px-3 py-1.5 border border-[#1f1f1f] bg-[#111] text-gray-400 hover:text-white rounded text-xs transition-colors">
-          <Download className="w-3.5 h-3.5" /> Export CSV
-        </button>
-      </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <Navbar />
+      <main className="max-w-6xl mx-auto px-4 py-10">
 
-      {/* Filters */}
-      <div className="border border-[#1f1f1f] bg-[#111] rounded-lg p-4 flex flex-wrap gap-6 items-center">
-        <div className="space-y-1">
-          <p className="text-[10px] text-gray-500 uppercase tracking-widest">Status</p>
-          <div className="flex gap-1">
-            {(["all", "active", "paused"] as const).map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1 rounded text-xs capitalize transition-colors ${statusFilter === s ? "bg-[#01696f]/20 text-[#01696f] border border-[#01696f]/30" : "border border-[#1f1f1f] text-gray-400 hover:text-white"}`}>
-                {s}
-              </button>
-            ))}
+        {/* Header */}
+        <div className="flex items-end justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-bold text-white">Leaderboard</h1>
+            <p className="text-xs text-gray-500 mt-0.5">All registered agents — ranked by APS</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {lastUpdated && (
+              <span className="text-[10px] text-gray-600 font-mono">
+                Updated {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+            <div className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${loading ? "bg-yellow-400 animate-pulse" : "bg-[#01696f] animate-pulse"}`} />
+              <span className="text-[10px] text-gray-500">{loading ? "syncing" : "live"}</span>
+            </div>
+            <button onClick={fetchAgents}
+              className="text-[10px] border border-[#1f1f1f] text-gray-500 hover:text-white px-2 py-1 rounded transition-colors">
+              ↻ Refresh
+            </button>
+            <Link href="/register"
+              className="text-[10px] border border-[#01696f]/40 text-[#01696f] hover:text-white hover:border-[#01696f] px-3 py-1.5 rounded transition-colors">
+              + Deploy Agent
+            </Link>
           </div>
         </div>
-        <div className="space-y-1 flex-1 min-w-[180px]">
-          <p className="text-[10px] text-gray-500 uppercase tracking-widest">Min TVL (${minTvl}K)</p>
-          <input type="range" min={0} max={2000} step={50} value={minTvl} onChange={e => setMinTvl(Number(e.target.value))}
-            className="w-full accent-[#01696f]" />
-        </div>
-        <div className="space-y-1">
-          <p className="text-[10px] text-gray-500 uppercase tracking-widest">Sort By</p>
-          <div className="flex gap-1">
-            {(["pnl", "tvl", "sharpe"] as const).map(s => (
-              <button key={s} onClick={() => setSortBy(s)}
-                className={`px-3 py-1 rounded text-xs capitalize transition-colors ${sortBy === s ? "bg-[#01696f]/20 text-[#01696f] border border-[#01696f]/30" : "border border-[#1f1f1f] text-gray-400 hover:text-white"}`}>
-                {s === "pnl" ? "Cumulative PnL" : s === "tvl" ? "TVL" : "Sharpe"}
-              </button>
-            ))}
+
+        {/* Stats bar */}
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="border border-[#1f1f1f] bg-[#111] rounded-lg p-3">
+            <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total Agents</p>
+            <p className="text-lg font-mono font-bold text-white">{agents.length}</p>
+          </div>
+          <div className="border border-[#1f1f1f] bg-[#111] rounded-lg p-3">
+            <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total TVL</p>
+            <p className="text-lg font-mono font-bold text-white">
+              ${fmt(agents.reduce((s, a) => s + a.tvl, 0))}
+            </p>
+          </div>
+          <div className="border border-[#1f1f1f] bg-[#111] rounded-lg p-3">
+            <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total Trades</p>
+            <p className="text-lg font-mono font-bold text-white">
+              {agents.reduce((s, a) => s + a.trades, 0)}
+            </p>
           </div>
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="border border-[#1f1f1f] bg-[#111] rounded-lg overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-[#1f1f1f] bg-[#0d0d0d]">
-              {["RANK", "AGENT", "PUBKEY", "STATUS", "TVL", "PNL", "TRADES", "SHARPE", "FEE"].map(h => (
-                <th key={h} className="px-4 py-3 text-[10px] text-gray-600 uppercase tracking-widest font-sans whitespace-nowrap">{h}</th>
+        {/* Table */}
+        <div className="border border-[#1f1f1f] bg-[#111] rounded-lg overflow-hidden">
+          {error ? (
+            <div className="p-8 text-center">
+              <p className="text-xs font-mono text-red-400">{error}</p>
+              <button onClick={fetchAgents} className="mt-3 text-xs text-[#01696f] hover:underline">Retry</button>
+            </div>
+          ) : loading && agents.length === 0 ? (
+            <div className="p-8 space-y-3">
+              {[1,2,3].map(i => (
+                <div key={i} className="h-10 bg-[#1a1a1a] rounded animate-pulse" />
               ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#1a1a1a] text-sm">
-            {filtered.map((agent, i) => (
-              <motion.tr key={agent.pubkey} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
-                className="hover:bg-[#141414] transition-colors cursor-pointer" onClick={() => window.open(`https://explorer.solana.com/address/${agent.pubkey}?cluster=devnet`, "_blank", "noopener,noreferrer")}>
-                <td className="px-4 py-3 font-mono text-xs text-gray-500">#{agent.rank}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded bg-[#01696f]/20 border border-[#01696f]/30 flex items-center justify-center text-[#01696f] text-[10px] font-bold">
-                      {agent.name[0]}
-                    </div>
-                    <div>
-                      <p className="text-white text-xs font-medium">{agent.name}</p>
-                      <p className="text-gray-600 text-[10px]">{agent.team}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-gray-500">{agent.pubkey}</td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 text-[10px] rounded border font-mono ${agent.status === "active" ? "border-[#01696f]/40 text-[#01696f] bg-[#01696f]/10" : "border-red-900/50 text-red-400 bg-red-900/10"}`}>
-                    ● {agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}
-                  </span>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-white">{agent.tvl}</td>
-                <td className={`px-4 py-3 font-mono text-xs font-medium ${agent.pnlPos ? "text-[#01696f]" : "text-red-400"}`}>{agent.pnl}</td>
-                <td className="px-4 py-3 font-mono text-xs text-gray-400">{agent.trades.toLocaleString()}</td>
-                <td className={`px-4 py-3 font-mono text-xs ${agent.sharpe > 0 ? "text-white" : "text-red-400"}`}>{agent.sharpe.toFixed(2)}</td>
-                <td className="px-4 py-3 font-mono text-xs text-gray-400">{agent.fee}</td>
-              </motion.tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </div>
+          ) : agents.length === 0 ? (
+            <div className="p-16 text-center">
+              <p className="text-2xl mb-3">🤖</p>
+              <p className="text-sm text-gray-400 font-medium">No agents registered yet</p>
+              <p className="text-xs text-gray-600 mt-1 mb-4">Be the first to deploy an AI trading agent</p>
+              <Link href="/register" className="text-xs text-[#01696f] border border-[#01696f]/40 px-4 py-2 rounded hover:bg-[#01696f]/10 transition-colors">
+                Deploy First Agent
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-[#1a1a1a]">
+                    <th className="px-4 py-3 text-left text-[10px] text-gray-600 font-medium uppercase tracking-widest w-8">#</th>
+                    {cols.map(c => (
+                      <th key={c.key}
+                        onClick={() => toggleSort(c.key)}
+                        className={`px-4 py-3 text-[10px] text-gray-600 font-medium uppercase tracking-widest cursor-pointer hover:text-white transition-colors select-none ${c.align === "right" ? "text-right" : "text-left"}`}>
+                        {c.label}
+                        {sort === c.key && (
+                          <span className="ml-1 text-[#01696f]">{dir === "desc" ? "↓" : "↑"}</span>
+                        )}
+                      </th>
+                    ))}
+                    <th className="px-4 py-3 text-right text-[10px] text-gray-600 font-medium uppercase tracking-widest">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((agent, i) => (
+                    <tr key={agent.pda}
+                      className="border-b border-[#141414] hover:bg-[#141414] transition-colors">
+                      <td className="px-4 py-3.5 text-gray-600 font-mono">{i + 1}</td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-md bg-[#01696f]/15 border border-[#01696f]/20 flex items-center justify-center text-[#01696f] font-bold text-[10px]">
+                            {agent.pda.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-white font-medium font-mono">{short(agent.pda)}</p>
+                            <p className="text-[9px] text-gray-600">dev: {short(agent.developer)}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-medium ${
+                          agent.status === "active"
+                            ? "bg-[#01696f]/15 text-[#01696f]"
+                            : "bg-red-900/20 text-red-400"
+                        }`}>
+                          {agent.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-mono text-white">${fmt(agent.tvl)}</td>
+                      <td className="px-4 py-3.5 text-right font-mono text-[#01696f]">{agent.aps.toFixed(6)}</td>
+                      <td className={`px-4 py-3.5 text-right font-mono ${agent.returnPct >= 0 ? "text-[#01696f]" : "text-red-400"}`}>
+                        {agent.returnPct >= 0 ? "+" : ""}{fmt(agent.returnPct, 3)}%
+                      </td>
+                      <td className={`px-4 py-3.5 text-right font-mono ${agent.pnl >= 0 ? "text-[#01696f]" : "text-red-400"}`}>
+                        {agent.pnl >= 0 ? "+" : ""}${fmt(Math.abs(agent.pnl))}
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-mono text-gray-400">{agent.trades}</td>
+                      <td className="px-4 py-3.5 text-right font-mono text-gray-400">{agent.perfFeeBps / 100}%</td>
+                      <td className="px-4 py-3.5 text-right">
+                        <Link href={`/agent/${agent.pda}`}
+                          className="text-[10px] border border-[#2a2a2a] hover:border-[#01696f]/50 text-gray-500 hover:text-white px-2.5 py-1 rounded transition-colors">
+                          View →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <p className="text-[10px] text-gray-700 text-center mt-4 font-mono">
+          Polling every 15s · Solana Devnet · Program {PROGRAM_ID.toBase58().slice(0,16)}...
+        </p>
+      </main>
     </div>
   );
 }

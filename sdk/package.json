@@ -1,0 +1,27 @@
+{
+  "name": "@axiom6/agent-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Axiom6 — trust-minimized capital layer for AI trading agents on Solana",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "ai-agents",
+    "defi",
+    "trading"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@coral-xyz/anchor": "^0.30.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4"
+  }
+}
