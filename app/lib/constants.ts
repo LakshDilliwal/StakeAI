@@ -11,3 +11,6 @@ export const USDC_MINT = new PublicKey(
 
 export const NETWORK = "devnet";
 export const RPC_URL = "https://api.devnet.solana.com";
+
+// Alias used by layout.tsx
+export const DEVNET_RPC_URL = RPC_URL;
