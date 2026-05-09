@@ -66,25 +66,25 @@ export default function Register() {
         program.programId
       );
 
-      // 3. Vault ATA — owner is agentStatePDA (PDA), so allowOwnerOffCurve = true
+      // 3. Vault ATA — owner is agentStatePDA (PDA), allowOwnerOffCurve = true
       const vaultUsdcAta = await getAssociatedTokenAddress(
         USDC_MINT,
         agentStatePDA,
-        true,                         // allowOwnerOffCurve — required for PDA owner
+        true,
         TOKEN_PROGRAM_ID,
         ASSOCIATED_TOKEN_PROGRAM_ID,
       );
 
       const tx = new Transaction();
 
-      // 4. CREATE vault ATA first — program requires it pre-initialized
+      // 4. Create vault ATA first — program requires it pre-initialized
       const vaultAtaInfo = await connection.getAccountInfo(vaultUsdcAta);
       if (!vaultAtaInfo) {
         tx.add(
           createAssociatedTokenAccountInstruction(
-            publicKey,      // payer
-            vaultUsdcAta,   // new ATA address
-            agentStatePDA,  // owner ← MUST be PDA, not developer
+            publicKey,
+            vaultUsdcAta,
+            agentStatePDA,  // owner = PDA
             USDC_MINT,
             TOKEN_PROGRAM_ID,
             ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -103,7 +103,7 @@ export default function Register() {
           vaultUsdcAta: vaultUsdcAta,
           systemProgram: SystemProgram.programId,
         })
-        .instruction();   // .instruction() not .rpc() — we build tx manually
+        .instruction();
 
       tx.add(registerIx);
 
@@ -112,11 +112,14 @@ export default function Register() {
       tx.recentBlockhash = blockhash;
       tx.feePayer = publicKey;
 
-      // 7. agentKeypair must co-sign (it's passed as account)
-      tx.partialSign(agentKeypair);
-
-      // 8. Wallet signs + send
+      // 7. Wallet (Phantom) signs first — only its own key
       const signed = await signTransaction(tx);
+
+      // 8. THEN agentKeypair signs the already-wallet-signed tx
+      //    This avoids Phantom rejecting an "unknown signer"
+      signed.partialSign(agentKeypair);
+
+      // 9. Send
       const signature = await connection.sendRawTransaction(signed.serialize(), {
         skipPreflight: false,
         preflightCommitment: "confirmed",
