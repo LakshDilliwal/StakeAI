@@ -34,7 +34,7 @@ export default function Register() {
   const [status, setStatus] = useState<"idle"|"pending"|"success"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [agentAddress, setAgentAddress] = useState("");
-  const [agentSecret, setAgentSecret] = useState("");
+  const [agentPubkeyStr, setAgentPubkeyStr] = useState("");
   const [txSig, setTxSig] = useState("");
 
   const handleDeploy = async () => {
@@ -56,17 +56,18 @@ export default function Register() {
       const program = getAxiom6Program(provider);
       const [registryPDA] = getRegistryPDA();
 
-      // 1. Fresh agent keypair
+      // Generate agent keypair — pubkey stored on-chain, secret key returned to user
+      // agent_pubkey is NOT a signer per IDL — no co-signing needed
       const agentKeypair = Keypair.generate();
       const agentPubkey = agentKeypair.publicKey;
 
-      // 2. agent_state PDA — seeds: ["agent", agent_pubkey]
+      // agent_state PDA — seeds: ["agent", agent_pubkey]
       const [agentStatePDA] = PublicKey.findProgramAddressSync(
         [Buffer.from("agent"), agentPubkey.toBuffer()],
         program.programId
       );
 
-      // 3. Vault ATA — owner is agentStatePDA (PDA), allowOwnerOffCurve = true
+      // Vault ATA — owner is agentStatePDA (PDA), allowOwnerOffCurve = true
       const vaultUsdcAta = await getAssociatedTokenAddress(
         USDC_MINT,
         agentStatePDA,
@@ -77,14 +78,14 @@ export default function Register() {
 
       const tx = new Transaction();
 
-      // 4. Create vault ATA first — program requires it pre-initialized
+      // Create vault ATA first — program requires it pre-initialized
       const vaultAtaInfo = await connection.getAccountInfo(vaultUsdcAta);
       if (!vaultAtaInfo) {
         tx.add(
           createAssociatedTokenAccountInstruction(
-            publicKey,
-            vaultUsdcAta,
-            agentStatePDA,  // owner = PDA
+            publicKey,      // payer
+            vaultUsdcAta,   // new ATA
+            agentStatePDA,  // owner = PDA (not developer!)
             USDC_MINT,
             TOKEN_PROGRAM_ID,
             ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -92,14 +93,15 @@ export default function Register() {
         );
       }
 
-      // 5. register_agent instruction
+      // register_agent instruction
+      // Only signer required: developer (= wallet) — agent_pubkey is readonly
       const registerIx = await (program.methods as any)
         .registerAgent(new BN(feeBps), [USDC_MINT])
         .accounts({
           registry: registryPDA,
           agentState: agentStatePDA,
           developer: publicKey,
-          agentPubkey: agentPubkey,
+          agentPubkey: agentPubkey,   // readonly account, no signature needed
           vaultUsdcAta: vaultUsdcAta,
           systemProgram: SystemProgram.programId,
         })
@@ -107,19 +109,12 @@ export default function Register() {
 
       tx.add(registerIx);
 
-      // 6. Blockhash + fee payer
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
       tx.recentBlockhash = blockhash;
       tx.feePayer = publicKey;
 
-      // 7. Wallet (Phantom) signs first — only its own key
+      // Only the developer wallet signs — no agentKeypair signing needed
       const signed = await signTransaction(tx);
-
-      // 8. THEN agentKeypair signs the already-wallet-signed tx
-      //    This avoids Phantom rejecting an "unknown signer"
-      signed.partialSign(agentKeypair);
-
-      // 9. Send
       const signature = await connection.sendRawTransaction(signed.serialize(), {
         skipPreflight: false,
         preflightCommitment: "confirmed",
@@ -130,7 +125,7 @@ export default function Register() {
       );
 
       setAgentAddress(agentStatePDA.toBase58());
-      setAgentSecret(Buffer.from(agentKeypair.secretKey).toString("base64"));
+      setAgentPubkeyStr(agentPubkey.toBase58());
       setTxSig(signature);
       setStatus("success");
     } catch (err: any) {
@@ -151,8 +146,13 @@ export default function Register() {
           <p className="text-[#01696f] text-sm font-medium text-center">✓ Agent Deployed On-Chain</p>
 
           <div>
+            <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Agent Pubkey (use this to stake)</p>
+            <p className="text-xs font-mono text-white break-all bg-[#111] rounded p-2">{agentPubkeyStr}</p>
+          </div>
+
+          <div>
             <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Agent State PDA</p>
-            <p className="text-xs font-mono text-white break-all bg-[#111] rounded p-2">{agentAddress}</p>
+            <p className="text-xs font-mono text-gray-400 break-all bg-[#111] rounded p-2">{agentAddress}</p>
           </div>
 
           <div>
@@ -164,14 +164,8 @@ export default function Register() {
             >{txSig}</a>
           </div>
 
-          <div>
-            <p className="text-yellow-500 text-[10px] uppercase tracking-widest mb-1">⚠ Agent Secret Key — save this now</p>
-            <p className="text-[10px] font-mono text-yellow-300 break-all bg-[#1a1000] border border-yellow-900/40 rounded p-2">{agentSecret}</p>
-            <p className="text-[9px] text-gray-600 mt-1">Base64-encoded. Store as AGENT_SECRET_KEY in .env. Not shown again.</p>
-          </div>
-
           <button
-            onClick={() => { setStatus("idle"); setName(""); setAgentSecret(""); setTxSig(""); }}
+            onClick={() => { setStatus("idle"); setName(""); setTxSig(""); }}
             className="w-full mt-2 px-4 py-2 border border-[#1f1f1f] text-gray-400 hover:text-white rounded text-xs transition-colors"
           >
             Deploy Another
