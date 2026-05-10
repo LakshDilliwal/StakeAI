@@ -392,7 +392,6 @@ pub struct Unstake<'info> {
         mut,
         seeds = [b"receipt", agent_state.agent_pubkey.as_ref(), staker.key().as_ref()],
         bump = staker_receipt.bump,
-        close = staker
     )]
     pub staker_receipt: Account<'info, StakerReceipt>,
     #[account(mut)]
