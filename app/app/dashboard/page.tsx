@@ -197,9 +197,9 @@ export default function Dashboard() {
     const customUsdc = parseFloat(unstakeAmt[pos.agentId] ?? "");
     let sharesToBurn: number;
     if (!isNaN(customUsdc) && customUsdc > 0) {
-      // convert USDC input → shares: shares = usdcAmount * 1e6 / currentAps
-      const currentApsRaw = pos.currentValue > 0 ? (pos.currentValue / pos.sharesOwned) * 1e6 : 1e6;
-      sharesToBurn = Math.floor((customUsdc * 1e6 / currentApsRaw) * 1e6);
+      // Proportional: burn fraction of shares matching USDC amount
+      const fraction = customUsdc / pos.currentValue;
+      sharesToBurn = Math.floor(pos.sharesOwned * fraction);
     } else {
       sharesToBurn = Math.floor(pos.sharesOwned * pct / 100);
     }
