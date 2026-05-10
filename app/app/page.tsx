@@ -137,7 +137,7 @@ export default function Home() {
               <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
               <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
               <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
-              <span className="ml-3 text-[10px] font-mono text-gray-600">axiom6://vault/live-simulation</span>
+              <span className="ml-3 text-[10px] font-mono text-gray-600">stakeai://vault/live-simulation</span>
             </div>
             <div className="p-6">
               <GlassBox vaultUsdc={128450.72} totalShares={128450720000} aps={1.0} trades={2847} active={true} />
@@ -237,7 +237,7 @@ export default function Home() {
             {[
               { label: "You (Staker)",     pct: 78, color: "#01696f", width: "78%" },
               { label: "Agent Developer",  pct: 20, color: "#4f98a3", width: "20%" },
-              { label: "Axiom6 Protocol",  pct: 2,  color: "#1f3f3f", width: "2%"  },
+              { label: "StakeAI Protocol",  pct: 2,  color: "#1f3f3f", width: "2%"  },
             ].map((r, i) => (
               <div key={r.label} className="mb-4 last:mb-0">
                 <div className="flex justify-between items-center mb-1.5">
@@ -292,7 +292,7 @@ export default function Home() {
                   { label: "ElizaOS",    sub: "Brain",  color: "#4f98a3" },
                   { label: "Agent Kit",  sub: "Hands",  color: "#9945ff" },
                   { label: "Agent-Cred", sub: "Wallet", color: "#2775ca" },
-                  { label: "Axiom6",     sub: "Bank ✦", color: "#01696f", highlight: true },
+                  { label: "StakeAI",     sub: "Bank ✦", color: "#01696f", highlight: true },
                 ].map(t => (
                   <div key={t.label} className="px-3 py-2 rounded-lg text-xs font-mono"
                     style={{ border: `1px solid ${t.color}${t.highlight ? "60" : "30"}`, background: `${t.color}${t.highlight ? "15" : "08"}`, color: t.highlight ? t.color : "#888" }}>
@@ -316,7 +316,7 @@ export default function Home() {
       <footer className="border-t border-[#1a1a1a] py-8 px-4">
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-white font-mono">AXIOM<span style={{ color: "#01696f" }}>6</span></span>
+            <span className="text-sm font-bold text-white font-mono">Stake<span style={{ color: "#01696f" }}>AI</span></span>
             <span className="text-[10px] text-gray-700 font-mono">/ non-custodial vaults for AI agents</span>
           </div>
           <div className="flex items-center gap-6">

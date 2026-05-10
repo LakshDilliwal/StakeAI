@@ -12,7 +12,7 @@ interface Agent {
 }
 
 const MOCK_AGENTS: Agent[] = [
-  {rank:1,name:"Axiom6 Alpha",      pubkey:"7sKSU5At",strategy:"Momentum Scalper", tvl:128450,apy:18.6,winRate:71.2,pnl:23841, trades:2847,status:"active"},
+  {rank:1,name:"StakeAI Alpha",      pubkey:"7sKSU5At",strategy:"Momentum Scalper", tvl:128450,apy:18.6,winRate:71.2,pnl:23841, trades:2847,status:"active"},
   {rank:2,name:"Sigma Delta",       pubkey:"9xKMT2Pq",strategy:"Delta Neutral",    tvl:94200, apy:14.3,winRate:68.5,pnl:13486, trades:1920,status:"active"},
   {rank:3,name:"Mean Rev Bot",      pubkey:"AcKp7Rz3",strategy:"Mean Reversion",   tvl:76300, apy:11.8,winRate:64.0,pnl:9012,  trades:1540,status:"active"},
   {rank:4,name:"Arb Hunter IV",     pubkey:"Bm2nP8Xt",strategy:"Arbitrage Hunter", tvl:55000, apy:9.4, winRate:59.3,pnl:5170,  trades:3210,status:"active"},

@@ -20,7 +20,7 @@ export function GlassBoxVisualizer() {
         <div className="flex flex-col items-center space-y-3">
           <div className="w-24 h-24 rounded border border-[#01696f] bg-[#01696f]/10 flex flex-col items-center justify-center overflow-hidden">
             <Database className="text-[#01696f] w-8 h-8 mb-2" />
-            <span className="text-[10px] font-mono text-[#01696f] font-bold">AXIOM6 VAULT</span>
+            <span className="text-[10px] font-mono text-[#01696f] font-bold">StakeAI VAULT</span>
           </div>
           <span className="text-xs font-mono text-gray-500 tracking-widest">PROGRAM PDA</span>
         </div>

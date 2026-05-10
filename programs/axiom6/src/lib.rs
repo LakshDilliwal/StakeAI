@@ -53,7 +53,7 @@ pub mod axiom6 {
 
         let clock = Clock::get()?;
         agent_state.epoch_start = clock.unix_timestamp;
-        agent_state.epoch_duration = 86400;
+        agent_state.epoch_duration = 60;
         agent_state.status = AgentStatus::Active;
         agent_state.whitelisted_mints = whitelisted_mints;
         agent_state.bump = ctx.bumps.agent_state;
@@ -242,7 +242,7 @@ pub mod axiom6 {
         require!(receipt.shares >= shares_to_burn, AxiomError::InsufficientShares);
         let clock = Clock::get()?;
         require!(
-            clock.unix_timestamp >= receipt.deposit_timestamp + agent_state.epoch_duration,
+            clock.unix_timestamp >= receipt.deposit_timestamp + 60, // devnet: 60s override
             AxiomError::EpochNotFinished
         );
 

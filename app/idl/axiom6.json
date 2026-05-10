@@ -26,6 +26,7 @@
         },
         {
           "name": "agent_state",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -259,6 +260,50 @@
           }
         }
       ]
+    },
+    {
+      "name": "resume_agent",
+      "discriminator": [
+        124,
+        252,
+        120,
+        140,
+        221,
+        125,
+        85,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "agent_state",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "registry",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
     },
     {
       "name": "settle_epoch",
@@ -607,6 +652,11 @@
       "code": 6011,
       "name": "InvalidRemainingAccounts",
       "msg": "Invalid remaining accounts"
+    },
+    {
+      "code": 6012,
+      "name": "InsufficientShares",
+      "msg": "Insufficient shares to unstake"
     }
   ],
   "types": [
@@ -664,6 +714,14 @@
             "type": {
               "vec": "pubkey"
             }
+          },
+          {
+            "name": "cumulative_pnl",
+            "type": "i64"
+          },
+          {
+            "name": "total_trades",
+            "type": "u64"
           },
           {
             "name": "bump",
