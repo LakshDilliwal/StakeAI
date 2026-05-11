@@ -34,7 +34,7 @@ export async function fetchAllAgents(): Promise<AgentInfo[]> {
     // Also fetch backend metadata (names, trade counts)
     let backendAgents: Record<string, any> = {};
     try {
-      const res = await fetch("http://localhost:4000/api/agents");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/agents`);
       const data = await res.json();
       for (const a of data.agents) backendAgents[a.agentPubkey] = a;
     } catch { /* backend optional */ }

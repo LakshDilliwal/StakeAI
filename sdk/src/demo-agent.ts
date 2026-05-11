@@ -1,29 +1,23 @@
 /**
  * Axiom6 Demo: Momentum Trading Agent
- * 
- * Reads SOL price from Pyth, decides BUY/HOLD based on a simple 
- * momentum signal, then calls execute_trade via the Axiom6 SDK.
- * 
+ * Reads SOL price signal, executes mock trade, reports to backend automatically.
+ *
  * Usage:
- *   AGENT_KEYPAIR=/path/to/keypair.json npx ts-node src/demo-agent.ts
+ *   AGENT_KEYPAIR=~/.config/solana/id.json \
+ *   AGENT_API_KEY=<your-api-key> \
+ *   npx ts-node src/demo-agent.ts
  */
 
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import fs from "fs";
-import { Axiom6Agent } from "./index";
+import { Axiom6Agent, registerAgent } from "./index";
 
 const DEVNET_RPC = "https://api.devnet.solana.com";
 const USDC_MINT  = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 const SOL_MINT   = new PublicKey("So11111111111111111111111111111111111111112");
 
-// Pyth devnet price feeds
-const PYTH_SOL_USD  = new PublicKey("J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix");
-const PYTH_USDC_USD = new PublicKey("5SSkXsEKQepHHAewytPVwdej4epN1nxgLVM84L4KXgy7");
-
 async function getMomentumSignal(connection: Connection): Promise<"BUY" | "HOLD"> {
-  // Stub: in production, read Pyth TWAP and compare to 5-period EMA
-  // For demo, return BUY 60% of the time
   const slot = await connection.getSlot();
   return slot % 5 < 3 ? "BUY" : "HOLD";
 }
@@ -31,26 +25,37 @@ async function getMomentumSignal(connection: Connection): Promise<"BUY" | "HOLD"
 async function main() {
   const connection = new Connection(DEVNET_RPC, "confirmed");
 
-  // Load agent keypair
   const keypairPath = process.env.AGENT_KEYPAIR || `${process.env.HOME}/.config/solana/id.json`;
   const raw = JSON.parse(fs.readFileSync(keypairPath, "utf8"));
   const agentKeypair = Keypair.fromSecretKey(Uint8Array.from(raw));
+  const agentPubkey = agentKeypair.publicKey.toBase58();
 
   console.log("🤖 Axiom6 Demo Agent starting...");
-  console.log(`   Agent pubkey: ${agentKeypair.publicKey.toBase58()}`);
+  console.log(`   Agent pubkey: ${agentPubkey}`);
 
-  // 5-line SDK integration ─────────────────────────────────────────
-  const agent = new Axiom6Agent({ connection, agentKeypair });
+  // Auto-register if no API key provided
+  let apiKey = process.env.AGENT_API_KEY;
+  if (!apiKey) {
+    console.log("\n�� No AGENT_API_KEY set — registering agent...");
+    const result = await registerAgent({
+      agentPubkey,
+      agentName: process.env.AGENT_NAME ?? `Agent ${agentPubkey.slice(0, 6)}`,
+      strategy: process.env.AGENT_STRATEGY ?? "momentum",
+      performanceFeeBps: 500,
+    });
+    apiKey = result.apiKey;
+    console.log(`   API Key: ${apiKey}`);
+    console.log(`   Set AGENT_API_KEY=${apiKey} to skip registration next time`);
+  }
+
+  const agent = new Axiom6Agent({ connection, agentKeypair, apiKey });
   await agent.init();
   const stats = await agent.getStats();
-  // ─────────────────────────────────────────────────────────────────
 
   console.log("\n📊 Agent Stats:");
   console.log(`   Status:          ${stats.status}`);
   console.log(`   Total Trades:    ${stats.totalTrades}`);
-  console.log(`   Cumulative PnL:  ${(stats.cumulativePnl / 1e6).toFixed(2)} USDC`);
   console.log(`   Assets/Share:    ${(stats.assetsPerShare / 1e6).toFixed(6)}`);
-  console.log(`   High Water Mark: ${(stats.highWaterMark / 1e6).toFixed(6)}`);
 
   if (stats.status !== "Active") {
     console.log("\n⚠️  Agent is not active. Exiting.");
@@ -65,31 +70,38 @@ async function main() {
     return;
   }
 
-  // Derive vault ATAs
   const vaultInputAta  = await getAssociatedTokenAddress(USDC_MINT, agent.statePDA, true);
-  const vaultOutputAta = await getAssociatedTokenAddress(SOL_MINT, agent.statePDA, true);
+  const vaultOutputAta = await getAssociatedTokenAddress(SOL_MINT,  agent.statePDA, true);
 
-  // In a real agent: fetch Jupiter quote, build swap instruction data
-  // For demo: we log what *would* happen
-  console.log("\n🔄 Would execute trade:");
-  console.log(`   Input:  USDC → ${vaultInputAta.toBase58().slice(0, 20)}...`);
-  console.log(`   Output: SOL  → ${vaultOutputAta.toBase58().slice(0, 20)}...`);
-  console.log(`   Route:  Jupiter v6 CPI via Axiom6 Glass Box Vault`);
-  console.log("\n✅ Demo complete. Connect a real Jupiter quote to go live.");
+  console.log("\n🔄 Simulating trade (demo mode)...");
+  const mockPnl = +((Math.random() - 0.3) * 200).toFixed(2);
+  const mockAps = +(stats.assetsPerShare / 1e6 + mockPnl / 1_000_000).toFixed(6);
+
+  // Report the simulated trade to backend
+  await agent.reportTrade({
+    txSignature: `demo_${Date.now()}`,
+    pnlUsdc: mockPnl,
+    newAps: mockAps,
+  });
+
+  console.log(`\n✅ Trade simulated & reported:`);
+  console.log(`   PnL:  ${mockPnl >= 0 ? "+" : ""}${mockPnl} USDC`);
+  console.log(`   APS:  ${mockAps}`);
+  console.log(`   View: http://localhost:3000/agent/${agentPubkey}`);
 
   /*
-  // LIVE TRADE (uncomment when vault is funded + Jupiter quote is ready):
+  // LIVE TRADE — uncomment when vault is funded + Jupiter quote ready:
   const sig = await agent.executeTrade({
-    inputMint:  USDC_MINT,
-    outputMint: SOL_MINT,
-    vaultInputAta,
-    vaultOutputAta,
-    pythInputPrice:  PYTH_USDC_USD,
-    pythOutputPrice: PYTH_SOL_USD,
+    inputMint: USDC_MINT, outputMint: SOL_MINT,
+    vaultInputAta, vaultOutputAta,
+    pythInputPrice:  new PublicKey("J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix"),
+    pythOutputPrice: new PublicKey("5SSkXsEKQepHHAewytPVwdej4epN1nxgLVM84L4KXgy7"),
     jupiterInstructionData: Buffer.from(jupiterSwapData, "base64"),
     remainingAccounts: jupiterAccounts,
+    pnlUsdc: estimatedPnl,
+    newAps: updatedAps,
   });
-  console.log(`✅ Trade executed: https://solscan.io/tx/${sig}?cluster=devnet`);
+  console.log(`✅ Live trade: https://solscan.io/tx/${sig}?cluster=devnet`);
   */
 }
 

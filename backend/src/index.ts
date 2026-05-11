@@ -73,4 +73,13 @@ app.get("/api/agents/:pubkey", (req, res) => {
 app.get("/health", (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;
+
+// Get Trade History for a specific agent
+app.get("/api/trades/:pubkey", (req, res) => {
+  const { pubkey } = req.params;
+  const db = readDb();
+  const agent = db.agents[pubkey];
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.json({ trades: agent.trades ?? [], total: (agent.trades ?? []).length });
+});
 app.listen(PORT, () => console.log(`Axiom6 API running on port ${PORT}`));
