@@ -30,6 +30,11 @@ export function Navbar() {
               {label}
             </Link>
           ))}
+          {/* Deploy Agent CTA */}
+          <Link href="/deploy"
+            className="ml-2 px-3 py-1.5 rounded text-sm font-sans font-medium transition-colors bg-[#01696f] text-white hover:bg-[#0c4e54] border border-[#01696f]">
+            + Deploy Agent
+          </Link>
         </div>
 
         <div className="flex items-center gap-3">
