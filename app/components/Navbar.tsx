@@ -10,6 +10,8 @@ export function Navbar() {
     { href: "/dashboard", label: "Dashboard" },
     { href: "/leaderboard", label: "Leaderboard" },
     { href: "/register", label: "Deploy Agent" },
+    { href: "/docs", label: "Docs" },
+    { href: "/faq", label: "FAQ" },
   ];
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#1f1f1f] bg-[#0a0a0a]/90 backdrop-blur-md">
