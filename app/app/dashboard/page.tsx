@@ -10,6 +10,7 @@ import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
 import { stakeUsdc, unstakeShares, deriveAgentState, deriveStakerReceipt } from "../../lib/stakeTransaction";
 import { PROGRAM_ID, USDC_MINT, REGISTRY_PDA, RPC_URL } from "../../lib/constants";
 import { fetchAllAgents, AgentInfo } from "../../lib/fetchAgents";
+import { WalletGate } from "../../components/WalletGate";
 
 const MOCK_CHART = Array.from({ length: 30 }, (_, i) => ({
   day: `Day ${i + 1}`,
@@ -22,10 +23,10 @@ interface Position {
   agentId: string;
   agentName: string;
   agentPubkey: string;
-  sharesOwned: number;       // raw shares (lamport-scale)
-  stakedUsdc: number;        // USDC deposited at entry (from receipt)
-  currentValue: number;      // sharesOwned * currentAps / 1e6
-  pnl: number;               // currentValue - stakedUsdc
+  sharesOwned: number;
+  stakedUsdc: number;
+  currentValue: number;
+  pnl: number;
   pnlPct: number;
   currentAps: number;
   receiptPda: string;
@@ -40,7 +41,7 @@ interface PositionLoadState {
   error?: string;
 }
 
-export default function Dashboard() {
+function DashboardInner() {
   const { connected, publicKey, signTransaction, signAllTransactions } = useWallet();
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
@@ -51,7 +52,6 @@ export default function Dashboard() {
   const [txSig, setTxSig] = useState("");
   const [txErr, setTxErr] = useState("");
 
-  // Unstake state per position
   const [unstakeState, setUnstakeState] = useState<Record<string, TxState>>({});
   const [unstakeErr, setUnstakeErr]     = useState<Record<string, string>>({});
   const [unstakeSig, setUnstakeSig]     = useState<Record<string, string>>({});
@@ -61,6 +61,15 @@ export default function Dashboard() {
   const [posState, setPosState] = useState<PositionLoadState>({
     status: "idle", positions: [], totalStaked: 0, totalValue: 0, totalPnl: 0,
   });
+
+  // ── Load agents on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    fetchAllAgents().then((data) => {
+      setAgents(data);
+      setAgentsLoading(false);
+      if (data.length > 0) setSelected(data[0]);
+    });
+  }, []);
 
   // ── Fetch all positions for connected wallet ──────────────────────────────
   const fetchPositions = useCallback(async () => {
@@ -93,17 +102,16 @@ export default function Dashboard() {
           console.log(`[pda-check] ${agent.name} agentKey=${agentKey.toBase58()} realAgentKey=${realAgentKey.toBase58()} staker=${publicKey.toBase58()} receiptPda=${receiptPda.toBase58()}`);
           const receipt = await (program.account as any).stakerReceipt.fetch(receiptPda);
           console.log(`[receipt-raw] ${agent.name}`, Object.keys(receipt), Object.values(receipt).map(v => String(v)));
-
           console.log(`[agent-raw] ${agent.name}`, Object.keys(agentStateData));
 
           function bnVal(v: any): number { return BN.isBN(v) ? v.toNumber() : (v && typeof v.toNumber === 'function' ? v.toNumber() : Number(v ?? 0)); }
 
-          const sharesOwned    = bnVal(receipt.shares);               // e.g. 4600000
-          const entryAps       = bnVal(receipt.entryAssetsPerShare);  // e.g. 1000000 = 1.0x
-          const currentApsRaw  = bnVal(agentStateData.assetsPerShare); // e.g. 1000000 = 1.0x
-          const currentAps     = currentApsRaw / 1e6;                 // 1.0
-          const stakedUsdc     = (sharesOwned * (entryAps / 1e6)) / 1e6;   // shares * entryAps / 1e12
-          const currentValue   = (sharesOwned * currentAps) / 1e6;         // shares * currentAps / 1e6
+          const sharesOwned    = bnVal(receipt.shares);
+          const entryAps       = bnVal(receipt.entryAssetsPerShare);
+          const currentApsRaw  = bnVal(agentStateData.assetsPerShare);
+          const currentAps     = currentApsRaw / 1e6;
+          const stakedUsdc     = (sharesOwned * (entryAps / 1e6)) / 1e6;
+          const currentValue   = (sharesOwned * currentAps) / 1e6;
           const pnl            = currentValue - stakedUsdc;
           const pnlPct        = stakedUsdc > 0 ? (pnl / stakedUsdc) * 100 : 0;
 
@@ -135,24 +143,21 @@ export default function Dashboard() {
     } catch (caughtErr: any) {
       setPosState(s => ({ ...s, status: "error", error: caughtErr?.message ?? String(caughtErr) }));
     }
-  }, [publicKey]);
+  }, [publicKey, agents]);
 
-  // Auto-fetch when switching to My Positions tab
   useEffect(() => {
     if (tab === "my" && connected && publicKey && posState.status === "idle") {
       fetchPositions();
     }
   }, [tab, connected, publicKey, posState.status, fetchPositions]);
 
-  // Re-fetch after a successful stake
   useEffect(() => {
     if (txState === "success" && tab === "my") {
       setPosState(s => ({ ...s, status: "idle" }));
-      setTimeout(fetchPositions, 2000); // give chain 2s to confirm
+      setTimeout(fetchPositions, 2000);
     }
   }, [txState]);
 
-  // ── Stake ─────────────────────────────────────────────────────────────────
   async function handleStake() {
     if (!connected || !publicKey || !signTransaction) return;
     const amt = parseFloat(stakeAmount);
@@ -168,7 +173,6 @@ export default function Dashboard() {
       setTxState("success");
       setTxSig(result.signature);
       setStakeAmount("");
-      // Invalidate positions cache
       setPosState(s => ({ ...s, status: "idle" }));
     } else {
       setTxState("error");
@@ -180,25 +184,22 @@ export default function Dashboard() {
     }
   }
 
-  // ── Unstake ───────────────────────────────────────────────────────────────
   async function handleUnstake(pos: Position) {
     if (!connected || !publicKey || !signTransaction) return;
     setUnstakeState(s => ({ ...s, [pos.agentId]: "loading" }));
     setUnstakeErr(s => ({ ...s, [pos.agentId]: "" }));
     setUnstakeSig(s => ({ ...s, [pos.agentId]: "" }));
 
-    // Calculate shares to burn based on % or custom input
     const pct = unstakePct[pos.agentId] ?? 100;
     const customUsdc = parseFloat(unstakeAmt[pos.agentId] ?? "");
     let sharesToBurn: number;
     if (!isNaN(customUsdc) && customUsdc > 0) {
-      // Proportional: burn fraction of shares matching USDC amount
       const fraction = customUsdc / pos.currentValue;
       sharesToBurn = Math.floor(pos.sharesOwned * fraction);
     } else {
       sharesToBurn = Math.floor(pos.sharesOwned * pct / 100);
     }
-    sharesToBurn = Math.min(sharesToBurn, pos.sharesOwned); // cap at max
+    sharesToBurn = Math.min(sharesToBurn, pos.sharesOwned);
 
     const result = await unstakeShares(pos.agentPubkey, sharesToBurn, {
       publicKey, signTransaction, signAllTransactions,
@@ -207,7 +208,6 @@ export default function Dashboard() {
     if (result.ok) {
       setUnstakeState(s => ({ ...s, [pos.agentId]: "success" }));
       setUnstakeSig(s => ({ ...s, [pos.agentId]: result.signature }));
-      // Refresh positions after 2s
       setTimeout(() => {
         setPosState(s => ({ ...s, status: "idle" }));
         fetchPositions();
@@ -240,16 +240,13 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white px-4 py-8">
       <div className="max-w-6xl mx-auto">
-
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white mb-1">Dashboard</h1>
           <p className="text-sm text-gray-500">
-            {connected ? `Connected: ${publicKey?.toBase58().slice(0, 8)}...` : "Connect wallet to stake"}
+            Connected: {publicKey?.toBase58().slice(0, 8)}...
           </p>
         </div>
 
-        {/* Stats row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
             { label: "Total Value Locked", value: "$12.8M", delta: "+12.4%" },
@@ -265,7 +262,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Tab switcher */}
         <div className="flex gap-2 mb-6">
           {(["vaults", "my"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}
@@ -289,10 +285,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* ── ALL VAULTS TAB ─────────────────────────────────────────────── */}
         {tab === "vaults" && (
           <div className="grid lg:grid-cols-3 gap-6">
-            {/* Agent list */}
             <div className="lg:col-span-1 space-y-2">
               {agents.map((agent) => (
                 <button key={agent.id} onClick={() => { setSelected(agent); setTxState("idle"); setStakeAmount(""); }}
@@ -319,7 +313,6 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {/* Detail + stake + chart */}
             <div className="lg:col-span-2 space-y-4">
               <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -362,7 +355,7 @@ export default function Dashboard() {
                     <input type="number" placeholder="Amount USDC" value={stakeAmount}
                       onChange={(e) => { setStakeAmount(e.target.value); setTxState("idle"); }}
                       className="flex-1 bg-[#111] border border-[#1f1f1f] rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#01696f]/60 transition-colors" />
-                    <button disabled={!connected || !stakeAmount || txState === "loading"} onClick={handleStake}
+                    <button disabled={!stakeAmount || txState === "loading"} onClick={handleStake}
                       className="px-6 py-2.5 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 min-w-[90px] justify-center"
                       style={{ background: "linear-gradient(135deg, #01696f, #0c4e54)" }}>
                       {txState === "loading"
@@ -370,7 +363,6 @@ export default function Dashboard() {
                         : "Stake"}
                     </button>
                   </div>
-                  {!connected && <p className="text-[11px] text-yellow-500/70 mt-2 font-mono">⚠ Connect wallet to stake</p>}
                   {txState === "success" && (
                     <div className="mt-3 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
                       <p className="text-[11px] text-green-400 font-mono mb-1">✓ Staked successfully</p>
@@ -388,7 +380,6 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* APS Chart */}
               <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-6">
                 <p className="text-xs text-gray-500 uppercase tracking-widest mb-4 font-mono">Assets Per Share — 30d</p>
                 <ResponsiveContainer width="100%" height={200}>
@@ -412,24 +403,8 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ── MY POSITIONS TAB ───────────────────────────────────────────── */}
         {tab === "my" && (
           <div>
-            {/* Not connected */}
-            {!connected && (
-              <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-16 text-center">
-                <div className="w-12 h-12 rounded-full bg-[#1a1a1a] flex items-center justify-center mx-auto mb-4">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.5">
-                    <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
-                    <line x1="12" y1="12" x2="12" y2="16"/><circle cx="12" cy="12" r="1" fill="#555"/>
-                  </svg>
-                </div>
-                <p className="text-gray-400 text-sm mb-1">Connect your wallet</p>
-                <p className="text-gray-600 text-xs">to view your staked positions</p>
-              </div>
-            )}
-
-            {/* Loading */}
             {connected && posState.status === "loading" && (
               <div className="space-y-3">
                 {[1, 2].map(i => (
@@ -443,7 +418,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Error */}
             {connected && posState.status === "error" && (
               <div className="border border-red-500/20 bg-red-500/5 rounded-xl p-6 text-center">
                 <p className="text-red-400 text-sm font-mono">✗ Failed to load positions</p>
@@ -454,7 +428,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Loaded — no positions */}
             {connected && posState.status === "loaded" && posState.positions.length === 0 && (
               <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-16 text-center">
                 <div className="w-12 h-12 rounded-full bg-[#1a1a1a] flex items-center justify-center mx-auto mb-4">
@@ -472,10 +445,8 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Loaded — has positions */}
             {connected && posState.status === "loaded" && posState.positions.length > 0 && (
               <div className="space-y-4">
-                {/* Portfolio summary */}
                 <div className="grid grid-cols-3 gap-4 mb-2">
                   {[
                     { label: "Total Staked",   value: `$${posState.totalStaked.toFixed(2)}`,  color: "text-white" },
@@ -490,7 +461,6 @@ export default function Dashboard() {
                   ))}
                 </div>
 
-                {/* Position cards */}
                 {posState.positions.map((pos) => {
                   const uState = unstakeState[pos.agentId] ?? "idle";
                   const uSig   = unstakeSig[pos.agentId]   ?? "";
@@ -523,12 +493,10 @@ export default function Dashboard() {
                         ))}
                       </div>
 
-                      {/* Shares info */}
                       <p className="text-[10px] font-mono text-gray-600 mb-4">
                         Shares: {pos.sharesOwned.toLocaleString()} · Receipt: {pos.receiptPda.slice(0, 8)}...{pos.receiptPda.slice(-6)}
                       </p>
 
-                      {/* Unstake button */}
                       <div className="border-t border-[#1a1a1a] pt-4">
                         {uState === "success" ? (
                           <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
@@ -540,41 +508,26 @@ export default function Dashboard() {
                           </div>
                         ) : (
                           <>
-                            {/* % quick-select chips */}
                             <div className="flex gap-2 mb-3">
                               {[25, 50, 75, 100].map(pct => (
-                                <button
-                                  key={pct}
-                                  onClick={() => {
-                                    setUnstakePct(s => ({ ...s, [pos.agentId]: pct }));
-                                    setUnstakeAmt(s => ({ ...s, [pos.agentId]: "" }));
-                                  }}
-                                  className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all border
-                                    ${(unstakePct[pos.agentId] ?? 100) === pct && !unstakeAmt[pos.agentId]
+                                <button key={pct}
+                                  onClick={() => { setUnstakePct(s => ({ ...s, [pos.agentId]: pct })); setUnstakeAmt(s => ({ ...s, [pos.agentId]: "" })); }}
+                                  className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all border ${
+                                    (unstakePct[pos.agentId] ?? 100) === pct && !unstakeAmt[pos.agentId]
                                       ? "bg-red-500/20 border-red-500/50 text-red-300"
                                       : "bg-[#1a1a1a] border-[#2a2a2a] text-[#666] hover:border-red-500/30 hover:text-red-400"}`}>
                                   {pct === 100 ? "MAX" : `${pct}%`}
                                 </button>
                               ))}
                             </div>
-                            {/* Custom USDC input */}
                             <div className="relative mb-3">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                max={pos.currentValue}
+                              <input type="number" min="0" step="0.01" max={pos.currentValue}
                                 placeholder={`Amount (max $${pos.currentValue.toFixed(2)})`}
                                 value={unstakeAmt[pos.agentId] ?? ""}
-                                onChange={e => {
-                                  setUnstakeAmt(s => ({ ...s, [pos.agentId]: e.target.value }));
-                                  setUnstakePct(s => ({ ...s, [pos.agentId]: 0 }));
-                                }}
-                                className="w-full bg-[#111] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-red-500/40 font-mono"
-                              />
+                                onChange={e => { setUnstakeAmt(s => ({ ...s, [pos.agentId]: e.target.value })); setUnstakePct(s => ({ ...s, [pos.agentId]: 0 })); }}
+                                className="w-full bg-[#111] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs text-white placeholder-[#444] focus:outline-none focus:border-red-500/40 font-mono" />
                               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[#444]">USDC</span>
                             </div>
-                            {/* Preview */}
                             <p className="text-[10px] text-[#555] font-mono mb-3">
                               You receive ≈ <span className="text-[#01696f]">
                                 ${(() => {
@@ -585,16 +538,14 @@ export default function Dashboard() {
                                 })()}
                               </span> USDC
                             </p>
-                            <button
-                              disabled={uState === "loading"}
-                              onClick={() => handleUnstake(pos)}
+                            <button disabled={uState === "loading"} onClick={() => handleUnstake(pos)}
                               className="w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-40 flex items-center justify-center gap-2 border border-red-500/20 bg-red-500/5 hover:bg-red-500/10 hover:border-red-500/40">
                               {uState === "loading"
                                 ? <><svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Unstaking...</>
                                 : "Unstake"}
                             </button>
                             {uState === "error" && uErr && (
-                              <p className={`text-[10px] font-mono mt-2 break-words ${uErr.includes("⏳") ? "text-yellow-400" : "text-red-400"}`}>{uErr.includes("⏳") ? uErr : `✗ ${uErr}`}</p>
+                              <p className={`text-[10px] font-mono mt-2 break-words ${uErr.includes("⏳") ? "text-yellow-400" : "text-red-400"}`}>{uErr}</p>
                             )}
                           </>
                         )}
@@ -604,25 +555,20 @@ export default function Dashboard() {
                 })}
               </div>
             )}
-
-            {/* Idle — trigger load */}
-            {connected && posState.status === "idle" && (
-              <div className="border border-[#1f1f1f] bg-[#0d0d0d] rounded-xl p-12 text-center">
-                <button onClick={fetchPositions}
-                  className="px-6 py-3 rounded-lg text-sm font-semibold text-white flex items-center gap-2 mx-auto"
-                  style={{ background: "linear-gradient(135deg, #01696f, #0c4e54)" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
-                    <path d="M21 3v5h-5"/>
-                  </svg>
-                  Load My Positions
-                </button>
-              </div>
-            )}
           </div>
         )}
-
       </div>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <WalletGate
+      title="Connect your wallet"
+      description="Connect a Solana wallet to view your positions, stake into vaults, and manage your portfolio."
+    >
+      <DashboardInner />
+    </WalletGate>
   );
 }
