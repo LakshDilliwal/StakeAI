@@ -10,7 +10,8 @@ export const USDC_MINT = new PublicKey(
 );
 
 export const NETWORK = "devnet";
-export const RPC_URL = "https://api.devnet.solana.com";
+// Use a more reliable devnet RPC endpoint
+export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || "https://rpc.ankr.com/solana_devnet";
 export const DEVNET_RPC_URL = RPC_URL;
 
 // Registry PDA — seeds: ["registry"]
