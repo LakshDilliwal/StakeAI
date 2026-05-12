@@ -39,6 +39,13 @@ function RegisterInner() {
   const [agentPubkeyStr, setAgentPubkeyStr] = useState("");
   const [txSig, setTxSig] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  function copy(text: string, key: string) {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  }
 
   const handleDeploy = async () => {
     if (!connected || !wallet || !publicKey || !signTransaction) {
@@ -120,25 +127,42 @@ function RegisterInner() {
       );
 
       let savedApiKey = "";
+      const agentPubkeyBase58 = agentPubkey.toBase58();
       try {
         const backendRes = await fetch(`${API}/api/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            agentPubkey: agentPubkey.toBase58(),
+            agentPubkey: agentPubkeyBase58,
             agentName: name.trim(),
             strategy: strategy,
             performanceFeeBps: feeBps,
+            ownerWallet: publicKey.toBase58(),
           }),
         });
         const backendData = await backendRes.json();
         savedApiKey = backendData.apiKey ?? "";
+
+        // Save to sessionStorage so /my-agent can auto-load without manual entry
+        if (savedApiKey) {
+          const ownerKey = publicKey.toBase58();
+          // Store list of agent pubkeys for this wallet
+          const existing = JSON.parse(sessionStorage.getItem(`axiom6_agents_${ownerKey}`) ?? "[]");
+          if (!existing.includes(agentPubkeyBase58)) {
+            existing.push(agentPubkeyBase58);
+            sessionStorage.setItem(`axiom6_agents_${ownerKey}`, JSON.stringify(existing));
+          }
+          // Store API key per agent
+          sessionStorage.setItem(`axiom6_apikey_${agentPubkeyBase58}`, savedApiKey);
+          // Keep last active agent for quick access
+          sessionStorage.setItem(`axiom6_last_agent_${ownerKey}`, agentPubkeyBase58);
+        }
       } catch (backendErr) {
         console.warn("Backend register failed (non-fatal):", backendErr);
       }
 
       setAgentAddress(agentStatePDA.toBase58());
-      setAgentPubkeyStr(agentPubkey.toBase58());
+      setAgentPubkeyStr(agentPubkeyBase58);
       setTxSig(signature);
       setApiKey(savedApiKey);
       setStatus("success");
@@ -161,29 +185,45 @@ function RegisterInner() {
             <span className="w-2 h-2 rounded-full bg-[#01696f] animate-pulse" />
             <p className="text-[#01696f] text-sm font-medium">Agent Deployed & Registered</p>
           </div>
+
           <div>
             <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Agent Pubkey</p>
-            <p className="text-xs font-mono text-white break-all bg-[#111] rounded p-2">{agentPubkeyStr}</p>
+            <div className="flex items-center gap-2 bg-[#111] rounded p-2">
+              <p className="text-xs font-mono text-white break-all flex-1">{agentPubkeyStr}</p>
+              <button onClick={() => copy(agentPubkeyStr, "pubkey")} className="text-[10px] font-mono text-gray-500 hover:text-white shrink-0 transition-colors">
+                {copied === "pubkey" ? "✓" : "copy"}
+              </button>
+            </div>
           </div>
+
           <div>
             <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">Agent State PDA</p>
             <p className="text-xs font-mono text-gray-400 break-all bg-[#111] rounded p-2">{agentAddress}</p>
           </div>
+
           {apiKey && (
             <div>
               <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">API Key — save this now, shown once</p>
-              <p className="text-xs font-mono text-yellow-400 break-all bg-[#111] rounded p-2 border border-yellow-900/40">{apiKey}</p>
+              <div className="flex items-center gap-2 bg-[#111] rounded p-2 border border-yellow-900/40">
+                <p className="text-xs font-mono text-yellow-400 break-all flex-1">{apiKey}</p>
+                <button onClick={() => copy(apiKey, "apikey")} className="text-[10px] font-mono text-gray-500 hover:text-yellow-400 shrink-0 transition-colors">
+                  {copied === "apikey" ? "✓" : "copy"}
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-600 font-mono mt-1.5">✓ Also saved to this session — visit My Agent to manage it.</p>
             </div>
           )}
+
           <div>
             <p className="text-gray-400 text-[10px] uppercase tracking-widest mb-1">TX Signature</p>
             <a href={`https://explorer.solana.com/tx/${txSig}?cluster=devnet`} target="_blank" rel="noopener noreferrer"
               className="text-[10px] font-mono text-[#4f98a3] break-all bg-[#111] rounded p-2 block hover:underline">{txSig}</a>
           </div>
+
           <div className="flex gap-2">
-            <a href="/leaderboard"
+            <a href="/my-agent"
               className="flex-1 text-center px-4 py-2 bg-[#01696f] hover:bg-[#01595e] text-white rounded text-xs font-medium transition-colors">
-              View on Leaderboard →
+              Go to My Agent →
             </a>
             <button onClick={() => { setStatus("idle"); setName(""); setTxSig(""); setApiKey(""); }}
               className="flex-1 px-4 py-2 border border-[#1f1f1f] text-gray-400 hover:text-white rounded text-xs transition-colors">

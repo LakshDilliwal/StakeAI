@@ -13,9 +13,9 @@ const DB_PATH = path.join(__dirname, "../db.json");
 function readDb() {
   if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ agents: {} }));
   const raw = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  // migrate: ensure votes field exists on all agents
   for (const key of Object.keys(raw.agents ?? {})) {
     if (!raw.agents[key].votes) raw.agents[key].votes = { likes: 0, dislikes: 0, voters: {} };
+    if (!raw.agents[key].ownerWallet) raw.agents[key].ownerWallet = null;
   }
   return raw;
 }
@@ -25,7 +25,7 @@ function writeDb(data: any) {
 
 // ── Register Agent ───────────────────────────────────────────────────────────
 app.post("/api/register", (req, res) => {
-  const { agentPubkey, agentName, strategy, performanceFeeBps } = req.body;
+  const { agentPubkey, agentName, strategy, performanceFeeBps, ownerWallet } = req.body;
   if (!agentPubkey || !agentName) return res.status(400).json({ error: "agentPubkey and agentName required" });
   const db = readDb();
   if (db.agents[agentPubkey]) return res.json({ apiKey: db.agents[agentPubkey].apiKey, existing: true });
@@ -35,6 +35,7 @@ app.post("/api/register", (req, res) => {
     agentName,
     strategy,
     performanceFeeBps,
+    ownerWallet: ownerWallet ?? null,
     registeredAt: Date.now(),
     trades: [],
     currentAps: 1.0,
@@ -52,7 +53,9 @@ app.post("/api/report-trade", (req, res) => {
   const db = readDb();
   const agent = db.agents[agentPubkey];
   if (!agent || agent.apiKey !== apiKey) return res.status(403).json({ error: "Invalid API key" });
-  const trade = { txSignature, pnlUsdc, newAps, reportedAt: Date.now() };
+  // verify_only is a no-op used by the frontend to check key validity
+  if (txSignature === "verify_only") return res.json({ ok: true, verified: true });
+  const trade = { txSignature, pnlUsdc, newAps: newAps ?? null, reportedAt: Date.now() };
   agent.trades.push(trade);
   if (newAps) agent.currentAps = newAps;
   writeDb(db);
@@ -70,9 +73,31 @@ app.get("/api/agents", (req, res) => {
     currentAps: data.currentAps,
     tradeCount: data.trades.length,
     registeredAt: data.registeredAt,
+    ownerWallet: data.ownerWallet ?? null,
     likes: data.votes?.likes ?? 0,
     dislikes: data.votes?.dislikes ?? 0,
   }));
+  res.json({ agents });
+});
+
+// ── Get Agents by Owner Wallet ────────────────────────────────────────────────
+app.get("/api/my-agents", (req, res) => {
+  const wallet = req.query.wallet as string;
+  if (!wallet) return res.status(400).json({ error: "wallet query param required" });
+  const db = readDb();
+  const agents = Object.entries(db.agents)
+    .filter(([_, data]: [string, any]) => data.ownerWallet === wallet)
+    .map(([pubkey, data]: [string, any]) => ({
+      agentPubkey: pubkey,
+      agentName: data.agentName,
+      strategy: data.strategy,
+      performanceFeeBps: data.performanceFeeBps,
+      currentAps: data.currentAps,
+      tradeCount: data.trades.length,
+      registeredAt: data.registeredAt,
+      likes: data.votes?.likes ?? 0,
+      dislikes: data.votes?.dislikes ?? 0,
+    }));
   res.json({ agents });
 });
 
@@ -86,7 +111,6 @@ app.get("/api/agents/:pubkey", (req, res) => {
 });
 
 // ── Like / Dislike ────────────────────────────────────────────────────────────
-// voter = wallet pubkey (passed in body), one vote per wallet per agent
 app.post("/api/agents/:pubkey/vote", (req, res) => {
   const { pubkey } = req.params;
   const { voter, type } = req.body as { voter: string; type: "like" | "dislike" };
@@ -97,29 +121,19 @@ app.post("/api/agents/:pubkey/vote", (req, res) => {
   const agent = db.agents[pubkey];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
   if (!agent.votes) agent.votes = { likes: 0, dislikes: 0, voters: {} };
-
-  const prev = agent.votes.voters[voter]; // undefined | "like" | "dislike"
-
+  const prev = agent.votes.voters[voter];
   if (prev === type) {
-    // toggle off — remove vote
     agent.votes[type === "like" ? "likes" : "dislikes"] = Math.max(0, agent.votes[type === "like" ? "likes" : "dislikes"] - 1);
     delete agent.votes.voters[voter];
   } else {
-    // remove old vote if switching
     if (prev) {
       agent.votes[prev === "like" ? "likes" : "dislikes"] = Math.max(0, agent.votes[prev === "like" ? "likes" : "dislikes"] - 1);
     }
-    // add new vote
     agent.votes[type === "like" ? "likes" : "dislikes"] += 1;
     agent.votes.voters[voter] = type;
   }
-
   writeDb(db);
-  res.json({
-    likes: agent.votes.likes,
-    dislikes: agent.votes.dislikes,
-    myVote: agent.votes.voters[voter] ?? null,
-  });
+  res.json({ likes: agent.votes.likes, dislikes: agent.votes.dislikes, myVote: agent.votes.voters[voter] ?? null });
 });
 
 // ── Trade History ─────────────────────────────────────────────────────────────
