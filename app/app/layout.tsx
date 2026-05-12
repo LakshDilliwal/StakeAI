@@ -1,8 +1,6 @@
 "use client";
-import { useMemo } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adapter-wallets";
 import { Toaster } from "react-hot-toast";
 import { DEVNET_RPC_URL } from "../lib/constants";
 import { GeistSans } from "geist/font/sans";
@@ -12,15 +10,12 @@ import "./globals.css";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const wallets = useMemo(() => [
-    new PhantomWalletAdapter(),
-    new SolflareWalletAdapter(),
-  ], []);
   return (
     <html lang="en" className={`dark ${GeistSans.variable} ${GeistMono.variable}`}>
       <body suppressHydrationWarning className="bg-[#0a0a0a] text-white min-h-screen selection:bg-[#01696f]/30 selection:text-white">
         <ConnectionProvider endpoint={DEVNET_RPC_URL}>
-          <WalletProvider wallets={wallets} autoConnect>
+          {/* Pass empty wallets array — Phantom/Solflare/Backpack register themselves via Wallet Standard */}
+          <WalletProvider wallets={[]} autoConnect>
             <WalletModalProvider>
               <Navbar />
               <div className="pt-14">
