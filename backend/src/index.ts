@@ -187,4 +187,4 @@ app.get("/api/portfolio", (req, res) => {
 app.get("/health", (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Axiom6 API running on port ${PORT}`));
+app.listen(Number(PORT), "0.0.0.0", () => console.log(`Axiom6 API running on port ${PORT}`));
